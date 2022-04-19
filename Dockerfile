@@ -6,7 +6,7 @@ ENV TINI_VERSION v0.19.0
 RUN curl --show-error --location --output /tini https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-amd64
 RUN chmod +x /tini
 
-RUN 	curl --silent --show-error https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip && \
+RUN     curl --silent --show-error https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip && \
         curl --silent --show-error --location --output /tmp/amazon-ssm-agent.deb https://s3.us-east-1.amazonaws.com/amazon-ssm-us-east-1/latest/debian_amd64/amazon-ssm-agent.deb && \
         unzip /tmp/awscliv2.zip && \
         dpkg -i /tmp/amazon-ssm-agent.deb && \
@@ -39,7 +39,7 @@ COPY /docker/docker-entrypoint.sh /app/docker/
 RUN chmod +x /app/docker/superset-entrypoint.sh
 RUN chmod +x /app/docker/docker-entrypoint.sh
 RUN chmod +x /app/docker/docker-init.sh
-RUN chmod +x /app/docker/docker-bootstrap.s
+RUN chmod +x /app/docker/docker-bootstrap.sh
 
 # We switch back to the `superset` user
 USER superset

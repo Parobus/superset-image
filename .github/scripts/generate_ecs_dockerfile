@@ -1,0 +1,8 @@
+#!/bin/sh
+
+cd .github/files/ecr-dockerfile-generator
+npm install
+npm start
+cd -
+rm ./Dockerfile-generated 2>&1
+mv .github/files/ecr-dockerfile-generator/Dockerfile ./Dockerfile-generated

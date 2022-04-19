@@ -1,0 +1,42 @@
+#!/bin/sh
+
+if [[ "$#" -eq "0" ]]
+then
+  BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+
+  case $BRANCH_NAME in
+    "main")
+      echo "superset.mortgagehealth.co.uk"
+      ;;
+
+    "staging")
+      echo "superset.mortgagebroker.tools"
+      ;;
+
+    "release")
+      echo "superset.mortgagebrokertools.co.uk"
+      ;;
+
+    *)
+      >&2 echo "unknown branch name"
+      exit 9
+  esac
+else
+  case $1 in
+    "nightly")
+      echo "superset.mortgagehealth.co.uk"
+      ;;
+
+    "staging")
+      echo "superset.mortgagebroker.tools"
+      ;;
+
+    "production")
+      echo "superset.mortgagebrokertools.co.uk"
+      ;;
+
+    *)
+      >&2 echo "unknown branch name"
+      exit 9
+  esac
+fi

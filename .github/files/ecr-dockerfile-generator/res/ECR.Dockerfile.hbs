@@ -1,0 +1,9 @@
+FROM parobus/zeus:{{branch}}
+
+LABEL annotations.generated-by={{generator}}
+LABEL annotations.timestamp={{timestamp}}
+
+{{! Register environment variables }}
+{{#each env}}
+ENV {{@key}}={{this}}
+{{/each}}

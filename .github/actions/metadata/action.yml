@@ -1,0 +1,11 @@
+name: Metadata
+description: Sets metadata variables for the deployment process.
+inputs: {}
+outputs:
+  deployment-name:
+    description: The name of the deployment.
+  kms-alias:
+    description: The AWS KMS alias to be used with the CredStash.
+runs:
+  using: 'node12'
+  main: 'dist/index.js'

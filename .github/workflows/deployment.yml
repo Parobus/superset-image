@@ -1,0 +1,140 @@
+name: Deployment
+
+on: workflow_dispatch
+
+env:
+  AWS_REGION: eu-west-1
+
+  # AWS ECS configuration
+  ECS_DEPLOYMENT_MODE: FARGATE
+  ECS_DEPLOYMENT_CPU: 2056
+  ECS_DEPLOYMENT_MEMORY: 2056
+  ECS_NETWORK_MODE: awsvpc
+  ECS_CONTAINER_PORT: 8088
+  ECS_PUBLISHED_PORT: 8088
+  ECS_HEALTHCHECK_URI: /health
+
+concurrency:
+  group: deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy-to-aws-ecs:
+    name: Deploy to the AWS ECS service
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 1200
+      - name: Sign in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+      - name: Get AWS CloudFormation stack name
+        id: cf-stack-name
+        run: echo "::set-output name=stack-name::$(.github/scripts/get_cf_stack_name)"
+      - name: Get deployment name
+        id: deployment-name
+        run: echo "::set-output name=deployment-name::$(.github/scripts/get_deployment_name)"
+      - name: Get ECS container name
+        id: ecs-container-name
+        run: echo "::set-output name=container-name::$(.github/scripts/get_ecs_container_name)"
+      - name: Get ECS cluster name
+        id: ecs-cluster-name
+        run: echo "::set-output name=cluster-name::$(.github/scripts/get_ecs_cluster_name)"
+      - name: Get ECS service name
+        id: ecs-service-name
+        run: echo "::set-output name=service-name::$(.github/scripts/get_ecs_service_name)"
+      - name: Get ECS deployment family
+        id: ecs-deployment-family
+        run: echo "::set-output name=deployment-family::$(.github/scripts/get_ecs_deployment_family)"
+      - name: Retrieve AWS CF stack parameters
+        id: retrieve-aws-cf-stack-parameters
+        env:
+          ECS_STACK_NAME: ${{ steps.cf-stack-name.outputs.stack-name }}
+          JSON_FILE: stack.json
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name $ECS_STACK_NAME > $JSON_FILE
+          echo "::set-output name=task-role-arn::$(jq -r '.Stacks[0].Outputs | map(select(.OutputKey == "TaskRoleArn"))[0].OutputValue' $JSON_FILE)"
+          echo "::set-output name=execution-role-arn::$(jq -r '.Stacks[0].Outputs | map(select(.OutputKey == "ExecutionRoleArn"))[0].OutputValue' $JSON_FILE)"
+          echo "::set-output name=ecs-service::$(jq -r '.Stacks[0].Outputs | map(select(.OutputKey == "EcsService"))[0].OutputValue' $JSON_FILE)"
+          echo "::set-output name=log-configuration-group::$(jq -r '.Stacks[0].Outputs | map(select(.OutputKey == "LogConfigurationGroup"))[0].OutputValue' $JSON_FILE)"
+          echo "::set-output name=log-configuration-stream-prefix::$(jq -r '.Stacks[0].Outputs | map(select(.OutputKey == "LogConfigurationStreamPrefix"))[0].OutputValue' $JSON_FILE)"
+      - name: Archive ECS stack artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: stack.json
+          path: stack.json
+      - name: Register AWS ECS task definition
+        id: register-aws-ecs-task-definition
+        env:
+          TASK_ROLE_ARN: ${{ steps.retrieve-aws-cf-stack-parameters.outputs.task-role-arn }}
+          EXECUTION_ROLE_ARN: ${{ steps.retrieve-aws-cf-stack-parameters.outputs.execution-role-arn }}
+          LOG_CONFIGURATION_GROUP: ${{ steps.retrieve-aws-cf-stack-parameters.outputs.log-configuration-group }}
+          LOG_CONFIGURATION_STREAM_PREFIX: ${{ steps.retrieve-aws-cf-stack-parameters.outputs.log-configuration-stream-prefix }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: superset
+          ECS_CONTAINER_NAME: ${{ steps.ecs-container-name.outputs.container-name }}
+          ECS_DEPLOYMENT_FAMILY: ${{ steps.ecs-deployment-family.outputs.deployment-family }}
+          IMAGE_TAG: unsafe-${{ github.sha }}-${{ steps.deployment-name.outputs.deployment-name }}
+          JSON_FILE: task-definition.json
+        run: |
+          aws ecs register-task-definition \
+            --requires-compatibilities $ECS_DEPLOYMENT_MODE \
+            --family $ECS_DEPLOYMENT_FAMILY \
+            --cpu $ECS_DEPLOYMENT_CPU \
+            --memory $ECS_DEPLOYMENT_MEMORY \
+            --network-mode $ECS_NETWORK_MODE \
+            --task-role-arn $TASK_ROLE_ARN \
+            --execution-role-arn $EXECUTION_ROLE_ARN \
+            --container-definitions "[{
+              \"name\": \"$ECS_CONTAINER_NAME\",
+              \"image\": \"$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG\",
+              \"essential\": true,
+              \"portMappings\": [{
+                \"containerPort\": $ECS_CONTAINER_PORT,
+                \"hostPort\": $ECS_PUBLISHED_PORT,
+                \"protocol\": \"tcp\"
+              }],
+              \"ulimits\": [
+              {
+               \"name\": \"nofile\",
+               \"softLimit\": 65536,
+               \"hardLimit\": 1048576
+              }],
+              \"logConfiguration\": {
+                \"logDriver\": \"awslogs\",
+                \"options\": {
+                  \"awslogs-group\": \"$LOG_CONFIGURATION_GROUP\",
+                  \"awslogs-stream-prefix\": \"$LOG_CONFIGURATION_STREAM_PREFIX\",
+                  \"awslogs-region\": \"$AWS_REGION\"
+                }
+              },
+                \"healthCheck\": {
+                  \"command\": [ \"CMD-SHELL\", \"curl -q --fail localhost:$ECS_PUBLISHED_PORT$ECS_HEALTHCHECK_URI || exit 1\" ],
+                  \"interval\": 5,
+                  \"timeout\": 10,
+                  \"retries\": 10
+                }
+              }]" > $JSON_FILE
+            echo "::set-output name=task-definition-arn::$(jq -r '.taskDefinition.taskDefinitionArn' $JSON_FILE)"
+      - name: Archive task definition artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: task-definition.json
+          path: task-definition.json
+      - name: Update the AWS ECS service
+        env:
+          CLUSTER_NAME: ${{ steps.ecs-cluster-name.outputs.cluster-name }}
+          SERVICE_NAME: ${{ steps.ecs-service-name.outputs.service-name }}
+          TASK_DEFINITION_ARN: ${{ steps.register-aws-ecs-task-definition.outputs.task-definition-arn }}
+        run: |
+          aws ecs update-service \
+            --cluster $CLUSTER_NAME \
+            --service $SERVICE_NAME \
+            --task-definition $TASK_DEFINITION_ARN

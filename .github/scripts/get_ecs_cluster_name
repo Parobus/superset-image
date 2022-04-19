@@ -1,0 +1,21 @@
+#!/bin/sh
+
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+
+case $BRANCH_NAME in
+  "main")
+    echo "integration-Superset-Cluster"
+    ;;
+
+  "staging")
+    echo "stage-Superset-Cluster"
+    ;;
+
+  "release")
+    echo "production-Superset-Cluster"
+    ;;
+
+  *)
+    >&2 echo "unknown branch name"
+    exit 9
+esac

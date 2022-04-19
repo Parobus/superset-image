@@ -1,0 +1,184 @@
+name: AWS ECR
+
+on: workflow_dispatch
+
+env:
+  AWS_REGION: eu-west-1
+
+  DOCKERHUB_REGISTRY: parobus
+  DOCKERHUB_REPOSITORY: superset
+
+concurrency:
+  group: ecr
+  cancel-in-progress: false
+
+jobs:
+  fetch-credentials:
+    name: Fetch credentials
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Get AWS KMS alias
+        id: kms-alias
+        run: echo "::set-output name=alias::$(.github/scripts/get_kms_alias)"
+      - name: Set up KMS artifact cache
+        uses: actions/cache@v2
+        with:
+          path: values.json
+          key: kms-artifact-${{ github.sha }}-${{ steps.kms-alias.outputs.alias }}
+          restore-keys: kms-artifact-${{ github.sha }}-${{ steps.kms-alias.outputs.alias }}
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 1200
+      - name: Get AWS session token
+        id: get-aws-session-token
+        run: |
+          aws sts get-session-token > session.json && \
+          echo "::set-output name=access-key-id::$(jq -r '.Credentials.AccessKeyId' session.json)" && \
+          echo "::set-output name=secret-access-key::$(jq -r '.Credentials.SecretAccessKey' session.json)" && \
+          echo "::set-output name=session-token::$(jq -r '.Credentials.SessionToken' session.json)"
+      - name: Run Credstash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ steps.get-aws-session-token.outputs.access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.get-aws-session-token.outputs.secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.get-aws-session-token.outputs.session-token }}
+          KMS_ALIAS: ${{ steps.kms-alias.outputs.alias }}
+        run: |
+          docker run -i \
+            -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
+            -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
+            -e AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN \
+            -e AWS_REGION=$AWS_REGION \
+            coxauto/credstash credstash \
+              -r $AWS_REGION \
+              -t $KMS_ALIAS \
+              getall \
+                -f json > values.json
+      - name: Store the KMS values as an artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: keys
+          path: values.json
+
+  dockerise:
+    name: Dockerise
+    runs-on: ubuntu-latest
+    needs: fetch-credentials
+    steps:
+      - uses: actions/checkout@v2
+      - uses: docker/login-action@v1
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: ./.github/actions/metadata
+        id: metadata
+      - name: Set up KMS artifact cache
+        uses: actions/cache@v2
+        with:
+          path: values.json
+          key: kms-artifact-${{ github.sha }}-${{ steps.kms-alias.outputs.alias }}
+          restore-keys: kms-artifact-${{ github.sha }}-${{ steps.kms-alias.outputs.alias }}
+      - name: Combine template parameters
+        env:
+          KEYS_FILE_NAME: values.json
+          OUTPUT_FILE_NAME: params.json
+        run: |
+          echo '{}' | \
+            jq ".env += $(cat $KEYS_FILE_NAME)" | \
+            jq ".branch += \"${{ steps.metadata.outputs.deployment-name }}\"" \
+              > ./.github/files/ecr-dockerfile-generator/$OUTPUT_FILE_NAME
+        shell: bash
+      - name: Run Dockerfile generator
+        run: ./.github/scripts/generate_ecs_dockerfile
+      - name: Store the generated Dockerfile as an artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: dockerfile
+          path: Dockerfile-generated
+      - name: Build the generated Dockerfile
+        env:
+          GENERATED_FILE_NAME: Dockerfile-generated
+          IMAGE_TAG: unsafe-${{ github.sha }}-${{ steps.metadata.outputs.deployment-name }}
+        run: |
+          docker build \
+            --no-cache \
+            --pull \
+            -f $GENERATED_FILE_NAME \
+            -t $DOCKERHUB_REGISTRY/$DOCKERHUB_REPOSITORY:$IMAGE_TAG \
+            .
+      - name: Sign out from Docker Hub
+        run: docker logout
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 1200
+      - name: Sign in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+      - name: Tag image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: superset
+          IMAGE_TAG: unsafe-${{ github.sha }}-${{ steps.metadata.outputs.deployment-name }}
+          RELEASE_NAME: ${{ steps.metadata.outputs.deployment-name }}
+          GENERATED_FILE_NAME: Dockerfile-generated
+        run: |
+          docker build \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            -f $GENERATED_FILE_NAME .
+          docker tag $DOCKERHUB_REGISTRY/$DOCKERHUB_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$RELEASE_NAME
+      - name: Inspect image size
+        id: image-size
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: superset
+          IMAGE_TAG: unsafe-${{ github.sha }}-${{ steps.metadata.outputs.deployment-name }}
+        run: |
+          echo "::set-output size=$(docker image inspect $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG | jq -r '.[0].Size' | numfmt --to=iec)"
+
+          if [[ "$(docker image inspect $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG | jq -r '.[0].Size')" -lt 1024000000 ]];
+          then
+            echo "::set-output valid=${{ true }}"
+          else
+            echo "::set-output valid=${{ false }}"
+          fi
+      - name: Push image to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: superset
+          IMAGE_TAG: unsafe-${{ github.sha }}-${{ steps.metadata.outputs.deployment-name }}
+          RELEASE_NAME: ${{ steps.metadata.outputs.deployment-name }}
+        run: |
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$RELEASE_NAME
+
+  invoke-deployment-workflow:
+    name: Run deployment workflow
+    runs-on: ubuntu-latest
+    needs: dockerise
+    steps:
+      - uses: actions/checkout@v2
+      - name: Store the branch name
+        id: branch-name
+        run: echo "::set-output name=branch::${GITHUB_REF#refs/heads/}"
+      - name: Sign in to Github CLI
+        run: |
+          echo '${{ secrets.PAT }}' | gh auth login --with-token
+      - name: Send a workflow dispatch event
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.ACCESS_SECRET_KEY_ID }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          gh workflow \
+            run deployment.yml \
+            -r ${{ steps.branch-name.outputs.branch }}
