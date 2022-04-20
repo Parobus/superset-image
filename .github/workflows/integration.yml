@@ -99,7 +99,7 @@ jobs:
       - name: Install Yamllint
         run: pip install yamllint==$YAMLLINT_VERSION
       - name: Run linter
-        run: yamllint ./*.yml ./.github/**/**.yml
+        run: yamllint ./docker-compose.yml ./.github/actions/metadata/action.yml
 
   lint-kotlin:
     name: Check Kotlin files
