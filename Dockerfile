@@ -1,13 +1,15 @@
+# hadolint ignore=DL3006
 FROM apache/superset
 # We switch to root
 USER root
 
+WORKDIR /app
 
 ENV TINI_VERSION v0.19.0
 RUN curl --show-error --location --output /tini https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-amd64
-RUN chmod +x /tini
-
-RUN     curl --silent --show-error https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip && \
+# hadolint ignore=DL3008
+RUN chmod +x /tini \
+&& curl --silent --show-error https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip && \
         curl --silent --show-error --location --output /tmp/amazon-ssm-agent.deb https://s3.us-east-1.amazonaws.com/amazon-ssm-us-east-1/latest/debian_amd64/amazon-ssm-agent.deb && \
         unzip /tmp/awscliv2.zip && \
         dpkg -i /tmp/amazon-ssm-agent.deb && \
@@ -39,10 +41,10 @@ COPY /docker/docker-init.sh /app/docker
 COPY /docker/docker-entrypoint.sh /app/docker/
 
 # We give permissions to different files
-RUN chmod +x /app/docker/superset-entrypoint.sh
-RUN chmod +x /app/docker/docker-entrypoint.sh
-RUN chmod +x /app/docker/docker-init.sh
-RUN chmod +x /app/docker/docker-bootstrap.sh
+RUN chmod +x /app/docker/superset-entrypoint.sh \
+&& chmod +x /app/docker/docker-entrypoint.sh \
+&& chmod +x /app/docker/docker-init.sh \
+&& chmod +x /app/docker/docker-bootstrap.sh
 
 # We switch back to the `superset` user
 USER superset
