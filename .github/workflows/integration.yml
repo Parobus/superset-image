@@ -10,7 +10,7 @@ on:
 env:
   # Docker Hub configuration
   DOCKERHUB_REGISTRY: parobus
-  DOCKERHUB_REPOSITORY: zeus
+  DOCKERHUB_REPOSITORY: superset
 
   # GitHub configuration
   GITHUB_URL: https://github.com/
@@ -28,12 +28,8 @@ env:
   HADOLINT_GIT_URL: https://github.com/hadolint/hadolint.git
 
   # Container settings
-  PORT: 4000
-  HEALTH_CHECK_URI: /actuator/health
-
-  # JVM settings
-  DEFAULT_JVM_OPTS: -Duser.country=US -Duser.language=en
-  GRADLE_OPTS: -Duser.country=US -Duser.language=en
+  PORT: 8088
+  HEALTH_CHECK_URI: /health
 
 concurrency:
   group: integration
@@ -115,46 +111,10 @@ jobs:
         run: ktlint
         continue-on-error: true
 
-  gradle-build:
-    name: Run Gradle build
-    runs-on: ubuntu-latest
-    needs:
-      - check-github
-      - lint-kotlin
-    steps:
-      - uses: actions/checkout@v2
-      - name: Restore Gradle cache
-        uses: actions/cache@v2
-        with:
-          path: build
-          key: gradle-${{ hashFiles('build.gradle.kts') }}
-          restore-keys: gradle-${{ hashFiles('build.gradle.kts') }}
-      - name: Install Gradle wrapper
-        run: ./gradlew wrapper
-      - name: Get AWS Athena schema
-        id: get-aws-athena-schema
-        run: echo "::set-output name=schema::$(.github/scripts/get_athena_schema)"
-      - name: Run Gradle build
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_ATHENA_REGION: ${{ secrets.AWS_ATHENA_REGION }}
-          AWS_ATHENA_S3_OUTPUT_LOCATION: ${{ secrets.AWS_ATHENA_S3_OUTPUT_LOCATION }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_ATHENA_SCHEMA: ${{ steps.get-aws-athena-schema.outputs.schema }}
-        run: ./gradlew assemble
-      - name: Archive JAR artifacts
-        run: tar cfz jars.tar.gz ./build/libs/
-      - name: Upload JAR files
-        uses: actions/upload-artifact@v2
-        with:
-          name: jars
-          path: jars.tar.gz
-
   dockerise:
     name: Create a Docker image
     runs-on: ubuntu-latest
     needs:
-      - gradle-build
       - lint-dockerfile
     steps:
       - uses: actions/checkout@v2
