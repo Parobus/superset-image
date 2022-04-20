@@ -98,8 +98,10 @@ jobs:
       - uses: actions/checkout@v2
       - name: Install Yamllint
         run: pip install yamllint==$YAMLLINT_VERSION
+      - name: Check yaml
+        run: cat ./docker-compose.yml
       - name: Run linter
-        run: yamllint ./docker-compose.yml ./.github/actions/metadata/action.yml
+        run: yamllint ./docker-compose.yml
 
   lint-kotlin:
     name: Check Kotlin files
