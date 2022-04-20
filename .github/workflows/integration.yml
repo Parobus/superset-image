@@ -60,7 +60,7 @@ jobs:
         run: gem install mdl
       - name: Run linter
         shell: bash
-        run: mdl *.md
+        run: mdl -r~MD013 *.md
 
   lint-dockerfile:
     name: Check Dockerfile

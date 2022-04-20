@@ -1,6 +1,7 @@
 # Superset
 
-<img src="https://github.com/apache/superset/raw/master/superset-frontend/src/assets/branding/superset-logo-horiz-apache.png" alt="Superset" width="500"/>
+![Superset!](https://github.com/apache/superset/raw/master/superset-frontend/src/assets/branding/superset-logo-horiz-apache.png "Superset")
+
 A modern, enterprise-ready business intelligence web application.
 
 ## Overview
