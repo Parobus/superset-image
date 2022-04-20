@@ -154,7 +154,8 @@ jobs:
         env:
           IMAGE_NAME: ${{ env.DOCKERHUB_REGISTRY }}/${{ env.DOCKERHUB_REPOSITORY }}:${{ steps.metadata.outputs.deployment-name }}
         run: |
-          docker compose up -D \
+          docker run \
+            -d \
             -p $PORT:$PORT \
             -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
             -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
